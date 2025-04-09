@@ -1,21 +1,41 @@
 package com.example.batman
 
 import android.app.Application
-import android.os.Bundle
 import android.content.Context
+import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -23,13 +43,33 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.room.*
-import androidx.work.*
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
+import androidx.room.Query
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
 import com.example.batman.ui.theme.BatmanTheme
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +78,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-// Alias Retrofit’s Query annotation to avoid conflict with Room’s Query.
 import retrofit2.http.GET
 import retrofit2.http.Query as RetrofitQuery
 import java.text.SimpleDateFormat
@@ -46,7 +85,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 // ============================
-// Data Models & Retrofit API
+// Retrofit API & Data Models
 // ============================
 
 data class AviationStackResponse(
@@ -108,7 +147,6 @@ interface AviationStackApi {
         @RetrofitQuery("flight_iata") flightIata: String
     ): AviationStackResponse
 
-    // New endpoint call to get flights by route.
     @GET("v1/flights")
     suspend fun getFlightsByRoute(
         @RetrofitQuery("access_key") accessKey: String,
@@ -130,14 +168,14 @@ object RetrofitInstance {
 }
 
 // ============================
-// ViewModel for Flight Tracking (Q1)
+// ViewModel for Flight Tracking
 // ============================
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
     var flightData by mutableStateOf<AviationFlightData?>(null)
     var error by mutableStateOf<String?>(null)
     var isTracking by mutableStateOf(false)
-    private val apiKey = "e58a2c66b107d12edd139fb0d46e3fdf"
+    private val apiKey = "47a4e80dcf8da59da398a40fca207017"
 
     fun fetchFlightByIATA(flightIata: String) {
         viewModelScope.launch {
@@ -174,7 +212,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 }
 
 // ============================
-// Data model for UI display of flight details
+// UI Data Model for Display
 // ============================
 data class FlightDisplay(
     val flightIata: String,
@@ -185,41 +223,193 @@ data class FlightDisplay(
 )
 
 // ============================
-// UI for Flight Tracker & Top 5 Flight Data with Average Duration
+// Room Database: Entity, DAO & Database
+// ============================
+@Entity(tableName = "flight_records")
+data class FlightRecordEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val flightIata: String,
+    val departureIata: String,
+    val arrivalIata: String,
+    val flightDurationMinutes: Long,
+    val recordedAt: Long
+)
+
+@Dao
+interface FlightRecordDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(record: FlightRecordEntity)
+
+    @Query("SELECT AVG(flightDurationMinutes) FROM flight_records WHERE departureIata = :depIata AND arrivalIata = :arrIata AND recordedAt >= :fromTimestamp")
+    suspend fun getWeeklyAverageDurationForRoute(depIata: String, arrIata: String, fromTimestamp: Long): Double?
+
+    // New query to fetch all records for a given route ordered by date (most recent first)
+    @Query("SELECT * FROM flight_records WHERE departureIata = :depIata AND arrivalIata = :arrIata ORDER BY recordedAt DESC")
+    suspend fun getFlightRecordsByRoute(depIata: String, arrIata: String): List<FlightRecordEntity>
+}
+
+@Database(entities = [FlightRecordEntity::class], version = 2, exportSchema = false)
+abstract class FlightDatabase : RoomDatabase() {
+    abstract fun flightRecordDao(): FlightRecordDao
+
+    companion object {
+        @Volatile private var INSTANCE: FlightDatabase? = null
+
+        fun getInstance(context: Context): FlightDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = Room.databaseBuilder(
+                    context.applicationContext,
+                    FlightDatabase::class.java,
+                      "batman"
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
+}
+
+// ============================
+// Background Worker using WorkManager
+// ============================
+class FlightDataWorker(appContext: Context, workerParams: WorkerParameters) :
+    CoroutineWorker(appContext, workerParams) {
+
+    private val apiKey = "47a4e80dcf8da59da398a40fca207017"
+    private val departureRoute = "LAX"
+    private val arrivalRoute = "JFK"
+
+    override suspend fun doWork(): Result {
+        return withContext(Dispatchers.IO) {
+            try {
+                Log.d("FlightDataWorker", "Worker started fetching data at ${System.currentTimeMillis()}")
+                val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+                val db = FlightDatabase.getInstance(applicationContext)
+                val response = RetrofitInstance.api.getFlightsByRoute(apiKey, departureRoute, arrivalRoute)
+                if (response.data.isNotEmpty()) {
+                    val top3Flights = response.data.take(3)
+                    for (flight in top3Flights) {
+                        val depTimeStr = flight.departure?.actual ?: flight.departure?.scheduled
+                        val arrTimeStr = flight.arrival?.actual ?: flight.arrival?.scheduled
+                        if (depTimeStr != null && arrTimeStr != null) {
+                            try {
+                                val depTime = formatter.parse(depTimeStr)
+                                val arrTime = formatter.parse(arrTimeStr)
+                                if (depTime != null && arrTime != null) {
+                                    val duration = (arrTime.time - depTime.time) / 60000
+                                    val record = FlightRecordEntity(
+                                        flightIata = flight.flight.iata ?: "N/A",
+                                        departureIata = flight.departure?.iata?.uppercase() ?: "N/A",
+                                        arrivalIata = flight.arrival?.iata?.uppercase() ?: "N/A",
+                                        flightDurationMinutes = duration,
+                                        recordedAt = System.currentTimeMillis()
+                                    )
+                                    db.flightRecordDao().insert(record)
+                                    Log.d("FlightDataWorker", "Inserted record for flight: ${flight.flight.iata}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e("FlightDataWorker", "Time parsing error for flight ${flight.flight.iata}: ${e.localizedMessage}")
+                            }
+                        }
+                    }
+                } else {
+                    Log.d("FlightDataWorker", "No flight data found for the route $departureRoute -> $arrivalRoute")
+                }
+                Result.success()
+            } catch (e: Exception) {
+                Log.e("FlightDataWorker", "Worker encountered an error: ${e.localizedMessage}")
+                Result.failure()
+            }
+        }
+    }
+}
+
+fun scheduleTestFlightDataWorker(context: Context) {
+    val constraints = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .build()
+
+    val request = OneTimeWorkRequestBuilder<FlightDataWorker>()
+        .setInitialDelay(20, TimeUnit.SECONDS)
+        .setConstraints(constraints)
+        .build()
+
+    WorkManager.getInstance(context).enqueue(request)
+}
+
+fun schedulePeriodicFlightDataWorker(context: Context) {
+    val constraints = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .build()
+
+    val periodicRequest = PeriodicWorkRequestBuilder<FlightDataWorker>(24, TimeUnit.HOURS)
+        .setConstraints(constraints)
+        .build()
+
+    WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+        "PeriodicFlightDataWorker",
+        ExistingPeriodicWorkPolicy.KEEP,
+        periodicRequest
+    )
+}
+
+
+// ============================
+// Navigation & Composable Screens
 // ============================
 
+// Home Screen with navigation buttons.
 @Composable
-fun FlightTrackerScreen(
-    modifier: Modifier = Modifier,
-    viewModel: FlightViewModel = viewModel()
-) {
-    var flightInput by remember { mutableStateOf("") }
-    // --- Q1: Flight tracking remains unchanged ---
-    // --- NEW: Top 5 Flight Data for a specific route (LAX -> JFK) ---
-    val departureRoute = "LAX"
-    val arrivalRoute = "JFK"
-    // States for top flights and average duration from API call.
-    var topFlights by remember { mutableStateOf<List<FlightDisplay>>(emptyList()) }
-    var averageDuration by remember { mutableStateOf<Double?>(null) }
-    var fetchError by remember { mutableStateOf<String?>(null) }
-    val coroutineScope = rememberCoroutineScope()
-    val context = LocalContext.current
-    // API key for calls (reuse the same key)
-    val apiKey = "e58a2c66b107d12edd139fb0d46e3fdf"
-    // Formatter to parse the time strings.
-    val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-
+fun HomeScreen(navController: androidx.navigation.NavHostController) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(
-                Brush.verticalGradient(
-                    colors = listOf(Color.Black, Color(0xFF1C1C2E))
-                )
+                Brush.verticalGradient(colors = listOf(Color.Black, Color(0xFF1C1C2E)))
             )
+            .padding(16.dp),
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Flight Tracker App", fontWeight = FontWeight.Bold, color = Color.Yellow, modifier = Modifier.padding(bottom = 16.dp))
+        Button(
+            onClick = { navController.navigate("tracking") },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Yellow)
+        ) {
+            Text("Track Flight", color = Color.Black, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Button(
+            onClick = { navController.navigate("topFlights") },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Yellow)
+        ) {
+            Text("Fetch Top 5 Flights", color = Color.Black, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        // Navigate to history screen for a default route (for example "LAX" to "JFK")
+        Button(
+            onClick = { navController.navigate("history/LAX/JFK") },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Yellow)
+        ) {
+            Text("View Flight History", color = Color.Black, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+// Screen for tracking a flight (real-time updates).
+@Composable
+fun TrackFlightScreen(viewModel: FlightViewModel = viewModel(), onBack: () -> Unit) {
+    var flightInput by remember { mutableStateOf("") }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(colors = listOf(Color.Black, Color(0xFF1C1C2E))))
             .padding(16.dp)
     ) {
-        // --------------------- Q1: Flight Tracking UI ---------------------
         Text("Track a Friend's Flight", fontWeight = FontWeight.Bold, color = Color.Yellow)
         OutlinedTextField(
             value = flightInput,
@@ -228,24 +418,17 @@ fun FlightTrackerScreen(
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
             modifier = Modifier.fillMaxWidth(),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.Gray,
-                focusedLabelColor = Color.Yellow,
-                unfocusedLabelColor = Color.Gray,
-                cursorColor = Color.Yellow,
-                focusedBorderColor = Color.Yellow,
-                unfocusedBorderColor = Color.Gray
+                focusedTextColor = Color.White, unfocusedTextColor = Color.Gray,
+                focusedLabelColor = Color.Yellow, unfocusedLabelColor = Color.Gray,
+                cursorColor = Color.Yellow, focusedBorderColor = Color.Yellow, unfocusedBorderColor = Color.Gray
             )
         )
         Spacer(modifier = Modifier.height(8.dp))
         if (!viewModel.isTracking) {
             Button(
                 onClick = {
-                    if (flightInput.isBlank()) {
-                        viewModel.error = "Please enter a valid flight number"
-                    } else {
-                        viewModel.startRealTimeTracking(flightInput)
-                    }
+                    if (flightInput.isNotBlank()) viewModel.startRealTimeTracking(flightInput)
+                    else viewModel.error = "Please enter a valid flight number"
                 },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Yellow)
@@ -273,7 +456,7 @@ fun FlightTrackerScreen(
                     InfoRow("Flight IATA", flight.flight.iata ?: "N/A")
                     InfoRow("Status", flight.flightStatus)
                     InfoRow("Airline", flight.airline?.name ?: "N/A")
-                    InfoRow("Aircraft Registration", flight.aircraft?.registration ?: "N/A")
+                    InfoRow("Aircraft Reg.", flight.aircraft?.registration ?: "N/A")
                     Spacer(modifier = Modifier.height(8.dp))
                     InfoRow("Departure", "${flight.departure?.airport ?: "N/A"} (${flight.departure?.iata ?: ""})")
                     InfoRow("Arrival", "${flight.arrival?.airport ?: "N/A"} (${flight.arrival?.iata ?: ""})")
@@ -285,55 +468,111 @@ fun FlightTrackerScreen(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(32.dp))
-        // --------------------- NEW: Top 5 Flight Data & Average Duration for Route ---------------------
+        Spacer(modifier = Modifier.weight(1f))
+        Button(
+            onClick = onBack,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
+        ) {
+            Text("Back", color = Color.White)
+        }
+    }
+}
+
+// Screen for fetching and showing Top 5 Flights for a route.
+@Composable
+fun TopFlightsScreen(onNavigateToHistory: (dep: String, arr: String) -> Unit, coroutineScope: kotlinx.coroutines.CoroutineScope = rememberCoroutineScope()) {
+    var departureInput by remember { mutableStateOf("") }
+    var arrivalInput by remember { mutableStateOf("") }
+    var topFlights by remember { mutableStateOf<List<FlightDisplay>>(emptyList()) }
+    var averageDuration by remember { mutableStateOf<Double?>(null) }
+    var fetchError by remember { mutableStateOf<String?>(null) }
+    val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+    val apiKey = "47a4e80dcf8da59da398a40fca207017"
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(colors = listOf(Color.Black, Color(0xFF1C1C2E))))
+            .padding(16.dp)
+    ) {
+        Text("Enter Route for Top Flights", fontWeight = FontWeight.Bold, color = Color.Yellow)
+        OutlinedTextField(
+            value = departureInput,
+            onValueChange = { departureInput = it },
+            label = { Text("Enter Departure IATA Code", fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold) },
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White, unfocusedTextColor = Color.Gray,
+                focusedLabelColor = Color.Yellow, unfocusedLabelColor = Color.Gray,
+                cursorColor = Color.Yellow, focusedBorderColor = Color.Yellow, unfocusedBorderColor = Color.Gray
+            )
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = arrivalInput,
+            onValueChange = { arrivalInput = it },
+            label = { Text("Enter Arrival IATA Code", fontStyle = FontStyle.Italic, fontWeight = FontWeight.Bold) },
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White, unfocusedTextColor = Color.Gray,
+                focusedLabelColor = Color.Yellow, unfocusedLabelColor = Color.Gray,
+                cursorColor = Color.Yellow, focusedBorderColor = Color.Yellow, unfocusedBorderColor = Color.Gray
+            )
+        )
+        Spacer(modifier = Modifier.height(16.dp))
         Text("Top 5 Flights & Average Duration for Route:", fontWeight = FontWeight.Bold, color = Color.Yellow)
-        Text("$departureRoute -> $arrivalRoute", color = Color.Yellow, fontWeight = FontWeight.Bold)
+        if (departureInput.isNotBlank() && arrivalInput.isNotBlank()) {
+            Text("${departureInput.uppercase()} -> ${arrivalInput.uppercase()}", color = Color.Yellow, fontWeight = FontWeight.Bold)
+        }
         Spacer(modifier = Modifier.height(8.dp))
         Button(
             onClick = {
-                fetchError = null
-                // Fetch flight data from the API.
-                coroutineScope.launch {
-                    try {
-                        val response = RetrofitInstance.api.getFlightsByRoute(apiKey, departureRoute, arrivalRoute)
-                        if (response.data.isNotEmpty()) {
-                            // Process top 5 flights.
-                            val flightDisplays = response.data.take(5).mapNotNull { flight ->
-                                val depTimeStr = flight.departure?.actual ?: flight.departure?.scheduled
-                                val arrTimeStr = flight.arrival?.actual ?: flight.arrival?.scheduled
-                                if (depTimeStr != null && arrTimeStr != null) {
-                                    try {
-                                        val depDate = formatter.parse(depTimeStr)
-                                        val arrDate = formatter.parse(arrTimeStr)
-                                        if (depDate != null && arrDate != null) {
-                                            val duration = (arrDate.time - depDate.time) / 60000
-                                            FlightDisplay(
-                                                flightIata = flight.flight.iata ?: "N/A",
-                                                airlineName = flight.airline?.name ?: "N/A",
-                                                departureAirport = flight.departure?.airport ?: "N/A",
-                                                arrivalAirport = flight.arrival?.airport ?: "N/A",
-                                                durationMinutes = duration
-                                            )
-                                        } else null
-                                    } catch (e: Exception) {
-                                        null
-                                    }
-                                } else null
-                            }
-                            topFlights = flightDisplays
-                            averageDuration = if (flightDisplays.isNotEmpty())
-                                flightDisplays.map { it.durationMinutes }.average()
-                            else null
+                if (departureInput.isBlank() || arrivalInput.isBlank()) {
+                    fetchError = "Please provide both departure and arrival IATA codes."
+                } else {
+                    fetchError = null
+                    coroutineScope.launch {
+                        try {
+                            val response = RetrofitInstance.api.getFlightsByRoute(apiKey, departureInput.trim(), arrivalInput.trim())
+                            if (response.data.isNotEmpty()) {
+                                val flightDisplays = response.data.take(5).mapNotNull { flight ->
+                                    val depTimeStr = flight.departure?.actual ?: flight.departure?.scheduled
+                                    val arrTimeStr = flight.arrival?.actual ?: flight.arrival?.scheduled
+                                    if (depTimeStr != null && arrTimeStr != null) {
+                                        try {
+                                            val depDate = formatter.parse(depTimeStr)
+                                            val arrDate = formatter.parse(arrTimeStr)
+                                            if (depDate != null && arrDate != null) {
+                                                val duration = (arrDate.time - depDate.time) / 60000
+                                                FlightDisplay(
+                                                    flightIata = flight.flight.iata ?: "N/A",
+                                                    airlineName = flight.airline?.name ?: "N/A",
+                                                    departureAirport = flight.departure?.airport ?: "N/A",
+                                                    arrivalAirport = flight.arrival?.airport ?: "N/A",
+                                                    durationMinutes = duration
+                                                )
+                                            } else null
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                    } else null
+                                }
+                                topFlights = flightDisplays
+                                averageDuration = if (flightDisplays.isNotEmpty())
+                                    flightDisplays.map { it.durationMinutes }.average() else null
 
-                            if (flightDisplays.isEmpty()) {
-                                fetchError = "No valid flight data available."
+                                if (flightDisplays.isEmpty()) {
+                                    fetchError = "No valid flight data available."
+                                }
+                            } else {
+                                fetchError = "No flight data found."
                             }
-                        } else {
-                            fetchError = "No flight data found."
+                        } catch (e: Exception) {
+                            fetchError = "Error: ${e.localizedMessage}"
                         }
-                    } catch (e: Exception) {
-                        fetchError = "Error: ${e.localizedMessage}"
                     }
                 }
             },
@@ -344,13 +583,8 @@ fun FlightTrackerScreen(
         }
         fetchError?.let { Text("Error: $it", color = Color.Red, fontStyle = FontStyle.Italic) }
         Spacer(modifier = Modifier.height(16.dp))
-        // Display details of top flights in a scrollable LazyColumn.
         if (topFlights.isNotEmpty()) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 300.dp)
-            ) {
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
                 items(topFlights) { flight ->
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -360,8 +594,8 @@ fun FlightTrackerScreen(
                         Column(modifier = Modifier.padding(12.dp)) {
                             InfoRow("Flight IATA", flight.flightIata)
                             InfoRow("Airline", flight.airlineName)
-                            InfoRow("Departure Airport", flight.departureAirport)
-                            InfoRow("Arrival Airport", flight.arrivalAirport)
+                            InfoRow("Departure", flight.departureAirport)
+                            InfoRow("Arrival", flight.arrivalAirport)
                             InfoRow("Duration (min)", flight.durationMinutes.toString())
                         }
                     }
@@ -369,16 +603,76 @@ fun FlightTrackerScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             averageDuration?.let {
-                Text(
-                    "Average Flight Duration: ${"%.2f".format(it)} minutes",
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
+                Text("Average Flight Duration: ${"%.2f".format(it)} minutes",
+                    fontWeight = FontWeight.Bold, color = Color.White)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (departureInput.isNotBlank() && arrivalInput.isNotBlank()) {
+                Button(
+                    onClick = { onNavigateToHistory(departureInput, arrivalInput) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Yellow)
+                ) {
+                    Text("View History for This Route", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
 }
 
+// Screen for displaying Flight History for a specified route.
+@Composable
+fun FlightHistoryScreen(depIata: String, arrIata: String, onBack: () -> Unit) {
+    val context = LocalContext.current
+    var flightRecords by remember { mutableStateOf<List<FlightRecordEntity>>(emptyList()) }
+    val dateFormatter = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+
+    LaunchedEffect(depIata, arrIata) {
+        val db = FlightDatabase.getInstance(context)
+        flightRecords = db.flightRecordDao().getFlightRecordsByRoute(depIata.uppercase(), arrIata.uppercase())
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(colors = listOf(Color.Black, Color(0xFF1C1C2E))))
+            .padding(16.dp)
+    ) {
+        Text("Flight History: ${depIata.uppercase()} -> ${arrIata.uppercase()}",
+            fontWeight = FontWeight.Bold, color = Color.Yellow)
+        Spacer(modifier = Modifier.height(8.dp))
+        if (flightRecords.isEmpty()) {
+            Text("No history available for this route.", color = Color.White)
+        } else {
+            LazyColumn {
+                items(flightRecords) { record ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2E)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            InfoRow("Flight IATA", record.flightIata)
+                            InfoRow("Duration (min)", record.flightDurationMinutes.toString())
+                            Text("Recorded at: ${dateFormatter.format(record.recordedAt)}",
+                                color = Color.LightGray, fontStyle = FontStyle.Italic)
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        Button(
+            onClick = onBack,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
+        ) {
+            Text("Back", color = Color.White)
+        }
+    }
+}
+
+// Reusable InfoRow Composable.
 @Composable
 fun InfoRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
@@ -388,143 +682,56 @@ fun InfoRow(label: String, value: String) {
     }
 }
 
-// ============================
-// (Existing Room/WorkManager Code Remains Unchanged)
-// ============================
-
-// --- Room Entity ---
-@Entity(tableName = "flight_records")
-data class FlightRecordEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val flightIata: String,
-    val departureIata: String,
-    val arrivalIata: String,
-    // Flight duration in minutes (actual time including delays)
-    val flightDurationMinutes: Long,
-    val recordedAt: Long // Timestamp in milliseconds
-)
-
-// --- DAO ---
-@Dao
-interface FlightRecordDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(record: FlightRecordEntity)
-
-    @Query("SELECT AVG(flightDurationMinutes) FROM flight_records WHERE departureIata = :depIata AND arrivalIata = :arrIata AND recordedAt >= :fromTimestamp")
-    suspend fun getWeeklyAverageDurationForRoute(depIata: String, arrIata: String, fromTimestamp: Long): Double?
-}
-
-// --- Room Database ---
-@Database(entities = [FlightRecordEntity::class], version = 2, exportSchema = false)
-abstract class FlightDatabase : RoomDatabase() {
-    abstract fun flightRecordDao(): FlightRecordDao
-
-    companion object {
-        @Volatile private var INSTANCE: FlightDatabase? = null
-
-        fun getInstance(context: Context): FlightDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    FlightDatabase::class.java,
-                    "fl_database"
-                )
-                    .fallbackToDestructiveMigration()
-                    .build()
-                INSTANCE = instance
-                instance
-            }
-        }
+// Preview for HomeScreen.
+@Preview(showBackground = true)
+@Composable
+fun DefaultPreview() {
+    BatmanTheme {
+        // RememberNavController() must be called within a composable context.
+        val navController = rememberNavController()
+        HomeScreen(navController = navController)
     }
 }
 
-// --- Background Worker using WorkManager ---
-class FlightDataWorker(appContext: Context, workerParams: WorkerParameters) :
-    CoroutineWorker(appContext, workerParams) {
-
-    private val apiKey = "e58a2c66b107d12edd139fb0d46e3fdf"
-    private val departureRoute = "LAX"
-    private val arrivalRoute = "JFK"
-
-    override suspend fun doWork(): Result {
-        return withContext(Dispatchers.IO) {
-            try {
-                val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-                val db = FlightDatabase.getInstance(applicationContext)
-                val response = RetrofitInstance.api.getFlightsByRoute(apiKey, departureRoute, arrivalRoute)
-                if (response.data.isNotEmpty()) {
-                    val top3Flights = response.data.take(3)
-                    for (flight in top3Flights) {
-                        val depTimeStr = flight.departure?.actual ?: flight.departure?.scheduled
-                        val arrTimeStr = flight.arrival?.actual ?: flight.arrival?.scheduled
-                        if (depTimeStr != null && arrTimeStr != null) {
-                            try {
-                                val depTime = formatter.parse(depTimeStr)
-                                val arrTime = formatter.parse(arrTimeStr)
-                                if (depTime != null && arrTime != null) {
-                                    val duration = (arrTime.time - depTime.time) / 60000
-                                    val record = FlightRecordEntity(
-                                        flightIata = flight.flight.iata ?: "N/A",
-                                        departureIata = flight.departure?.iata?.uppercase() ?: "N/A",
-                                        arrivalIata = flight.arrival?.iata?.uppercase() ?: "N/A",
-                                        flightDurationMinutes = duration,
-                                        recordedAt = System.currentTimeMillis()
-                                    )
-                                    db.flightRecordDao().insert(record)
-                                }
-                            } catch (e: Exception) {
-                                // Skip record if time parsing fails.
-                            }
-                        }
-                    }
-                }
-                Result.success()
-            } catch (e: Exception) {
-                Result.failure()
-            }
-        }
-    }
-}
-
-fun scheduleWeeklyFlightDataWorker(context: Context) {
-    val constraints = Constraints.Builder()
-        .setRequiredNetworkType(NetworkType.CONNECTED)
-        .build()
-
-    val request = PeriodicWorkRequestBuilder<FlightDataWorker>(24, TimeUnit.HOURS)
-        .setConstraints(constraints)
-        .build()
-
-    WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-        "WeeklyFlightDataWorker",
-        ExistingPeriodicWorkPolicy.KEEP,
-        request
-    )
-}
-
 // ============================
-// MainActivity with WorkManager scheduling
+// MainActivity with Navigation Setup
 // ============================
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        scheduleWeeklyFlightDataWorker(this)
+        // Schedule background tasks.
+        scheduleTestFlightDataWorker(this)
+        schedulePeriodicFlightDataWorker(this)
         setContent {
             BatmanTheme {
-                FlightTrackerScreen(modifier = Modifier.fillMaxSize())
+                // Setup NavController here within the composable context.
+                val navController = rememberNavController()
+                NavHost(navController = navController, startDestination = "home") {
+                    composable("home") {
+                        HomeScreen(navController = navController)
+                    }
+                    composable("tracking") {
+                        TrackFlightScreen(onBack = { navController.navigate("home") })
+                    }
+                    composable("topFlights") {
+                        TopFlightsScreen(onNavigateToHistory = { dep, arr ->
+                            navController.navigate("history/${dep.uppercase()}/${arr.uppercase()}")
+                        })
+                    }
+                    composable(
+                        "history/{depIata}/{arrIata}",
+                        arguments = listOf(
+                            navArgument("depIata") { type = NavType.StringType },
+                            navArgument("arrIata") { type = NavType.StringType }
+                        )
+                    ) { backStackEntry ->
+                        val depIata = backStackEntry.arguments?.getString("depIata") ?: "N/A"
+                        val arrIata = backStackEntry.arguments?.getString("arrIata") ?: "N/A"
+                        FlightHistoryScreen(depIata = depIata, arrIata = arrIata, onBack = { navController.navigate("home") })
+                    }
+                }
             }
         }
-    }
-}
-
-// ============================
-// Preview
-// ============================
-@Preview(showBackground = true)
-@Composable
-fun DefaultPreview() {
-    BatmanTheme {
-        FlightTrackerScreen(modifier = Modifier.fillMaxSize())
     }
 }

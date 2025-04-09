@@ -79,4 +79,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:$work_version")
     ksp("androidx.room:room-compiler:$room_version")
     implementation("androidx.room:room-ktx:$rootProject.roomVersion")
+
+    val nav_version = "2.8.9"
+
+    implementation("androidx.navigation:navigation-compose:$nav_version")
 }
