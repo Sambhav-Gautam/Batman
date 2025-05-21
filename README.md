@@ -1,114 +1,168 @@
 # Flight Tracker: Real-Time Flight Insights & Data Analytics
 
-Welcome to the **Flight Tracker** project—a robust Android application designed to deliver real-time flight tracking, top flights data analytics, and detailed historical flight records. This project is built with modern Android technologies including Jetpack Compose, Retrofit, Room, and WorkManager for a seamless and reactive experience.
+Welcome to **Flight Tracker**, a powerful Android application designed for real-time flight tracking, top flights data analytics, and historical flight records. Built with modern Android technologies like **Jetpack Compose**, **Retrofit**, **Room**, and **WorkManager**, this app delivers a seamless and reactive user experience with a sleek "Batman" dark  theme.
 
 ---
 
 ## Overview
-
-Batman Flight Tracker integrates with an external aviation API to fetch live flight information, allowing users to track individual flights, view top flights for specific routes, and access historical flight data stored locally. The app is themed with a "Batman" motif that enhances its visual appeal while providing utility.
+Flight Tracker integrates with an external aviation API to provide live flight information, analytics for top flights on specific routes, and a local database for historical flight data. The app's modern UI and robust architecture make it a go-to tool for aviation enthusiasts and data-driven travelers.
 
 ---
 
 ## Features
 
-- **Real-Time Flight Tracking:**  
-  Fetch and display live details of a flight by inputting the flight's IATA code. Live flight parameters such as status, airline, departure, arrival, location coordinates, altitude, and speed are displayed.
+### Real-Time Flight Tracking
+- Input a flight's **IATA code** to fetch and display live flight details, including:
+  - Status, airline, departure, arrival
+  - Location coordinates, altitude, and speed
 
-- **Top Flights Analytics:**  
-  Enter departure and arrival IATA codes to get insights on the top 5 flights on the route. This includes calculating the flight durations and providing an average duration for the route.
+### Top Flights Analytics
+- Enter departure and arrival **IATA codes** to view insights on the **top 5 flights** for the route.
+- Displays flight durations and calculates the **average duration** for the route.
 
-- **Flight History:**  
-  A local Room database stores detailed records of flight data. Users can review these records sorted by date, which include flight IATA, duration in minutes, and the timestamp for when the data was recorded.
+### Flight History
+- Stores flight records in a local **Room database**.
+- View historical data sorted by date, including flight IATA, duration, and timestamp.
 
-- **Background Data Updates:**  
-  WorkManager is utilized to perform periodic background fetching of flight data. This ensures that the app maintains up-to-date information by scheduling both one-time and recurring work tasks.
+### Background Data Updates
+- Uses **WorkManager** to periodically fetch flight data in the background.
+- Supports both one-time and recurring tasks to keep data up-to-date.
 
-- **Modern UI with Jetpack Compose:**  
-  The user interface is implemented using Jetpack Compose, enabling a declarative approach to UI design that supports themes, responsive layouts, and smooth transitions through composable screens.
+### Modern UI with Jetpack Compose
+- Built with **Jetpack Compose** for a declarative, responsive, and visually appealing UI.
+- Features a custom **BatmanTheme** with dark  aesthetics.
+
+---
+
+## Tech Stack
+![Kotlin](https://img.shields.io/badge/Kotlin-1.9.0-7F52FF.svg?style=flat-square&logo=kotlin&logoColor=white)
+![Jetpack Compose](https://img.shields.io/badge/Jetpack_Compose-1.5.0-4285F4.svg?style=flat-square&logo=android&logoColor=white)
+![Retrofit](https://img.shields.io/badge/Retrofit-2.9.0-FFCA28.svg?style=flat-square)
+![Room](https://img.shields.io/badge/Room-2.5.0-4CAF50.svg?style=flat-square)
+![WorkManager](https://img.shields.io/badge/WorkManager-2.8.0-1976D2.svg?style=flat-square)
+
+- **Kotlin**: Primary programming language.
+- **Jetpack Compose**: Modern UI toolkit for declarative UI design.
+- **Retrofit**: For API communication with aviation data endpoints.
+- **Room**: Local database for persistent storage of flight records.
+- **WorkManager**: For scheduling background tasks.
+- **Gson**: For JSON parsing.
+- **Coroutines**: For asynchronous programming.
 
 ---
 
 ## Architecture
+The app follows a **layered architecture** to ensure maintainability and scalability:
 
-The application follows a layered architecture designed to separate concerns and enhance maintainability:
+### Network Layer
+- **Retrofit API Integration**: Communicates with an external aviation API via two endpoints:
+  - `getFlightByIATA`: Fetches details for a specific flight.
+  - `getFlightsByRoute`: Retrieves data for flights on a specified route.
+- **Data Models**: Structured classes like `AviationStackResponse` and `AviationFlightData` map API responses.
 
-1. **Network Layer:**
-   - **Retrofit API Integration:**  
-     The app uses Retrofit to communicate with an external aviation API. Two main API endpoints are provided:
-     - **`getFlightByIATA`:** Retrieves details for a flight based on its IATA code.
-     - **`getFlightsByRoute`:** Fetches flight details for a specified departure and arrival route.
-   - **Data Models:**  
-     Data classes are defined to map the JSON responses from the API, such as `AviationStackResponse`, `AviationFlightData`, and nested models (`FlightInfo`, `LiveInfo`, `AirportInfo`, `AirlineInfo`, and `AircraftInfo`).
+### Business Logic Layer
+- **FlightViewModel**: Manages UI state and business logic, including real-time tracking with a coroutine-based polling loop (refreshes every minute).
+- **FlightDataWorker**: A `CoroutineWorker` that periodically fetches and stores flight data for a specific route (e.g., LAX to JFK).
 
-2. **Business Logic Layer:**
-   - **ViewModel (`FlightViewModel`):**  
-     This component handles UI state management and business logic. It provides methods to fetch flight data, start and stop real-time tracking, and update the UI accordingly. Continuous tracking is implemented through a coroutine loop that refreshes flight details every minute.
-   - **Background Worker (`FlightDataWorker`):**  
-     A dedicated worker class extends `CoroutineWorker` to periodically fetch flight data for a specific route (example: from LAX to JFK) and store the results in the local database. It parses flight times to calculate flight duration and handles error logging.
+### Data Persistence Layer
+- **Room Database**: Stores flight records using:
+  - **Entity**: `FlightRecordEntity` for storing flight details.
+  - **DAO**: `FlightRecordDao` for CRUD operations and querying historical data.
+  - **Database Singleton**: Ensures thread-safe access to the database.
 
-3. **Data Persistence Layer:**
-   - **Room Database:**  
-     The local database, implemented using Room, persists flight records. The key components here include:
-     - **Entity (`FlightRecordEntity`):** Represents each flight record stored in the database.
-     - **Data Access Object (DAO) (`FlightRecordDao`):** Contains SQL queries to insert flight records, compute weekly averages for a given route, and retrieve historical flight records in descending order.
-   - **Database Singleton:**  
-     A thread-safe singleton instance of the database is provided to ensure a single access point throughout the application lifecycle.
-
-4. **Presentation Layer:**
-   - **Jetpack Compose UI Components:**  
-     The UI is organized into several composable functions and screens:
-     - **Home Screen:**  
-       Acts as the main navigation hub where users can choose to track a flight, view top flights, or see historical flight data.
-     - **Track Flight Screen:**  
-       Allows users to enter a flight IATA code and displays real-time data. Users can start or stop tracking based on the current state.
-     - **Top Flights Screen:**  
-       Provides inputs for departure and arrival IATA codes, fetches data for the top 5 flights of that route, displays each flight’s details, and computes the average flight duration.
-     - **Flight History Screen:**  
-       Displays a chronological list of stored flight records from the Room database, including details like the flight's IATA code, flight duration, and record timestamp.
-   - **Reusable UI Components:**  
-     Components like `InfoRow` are used across different screens to consistently display label-value pairs in a formatted manner.
-
-5. **Navigation and Theming:**
-   - The app leverages Compose Navigation to manage transitions between screens seamlessly.  
-   - A custom theme (`BatmanTheme`) is used to style the application, including color palettes, typography, and overall visual design.
-   - Edge-to-edge display support is enabled to maximize screen space, providing a modern, immersive experience.
+### Presentation Layer
+- **Jetpack Compose UI**:
+  - **Home Screen**: Navigation hub for app features.
+  - **Track Flight Screen**: Input IATA code to view real-time flight data.
+  - **Top Flights Screen**: Displays top 5 flights for a route with average duration.
+  - **Flight History Screen**: Shows stored flight records in a scrollable list.
+  - **Reusable Components**: `InfoRow` for consistent data display.
+- **Navigation**: Uses **Compose Navigation** for seamless screen transitions.
+- **Theming**: Custom `BatmanTheme` with dark  colors and edge-to-edge display support.
 
 ---
 
-## Detailed Explanation of Code Components
+## Demo
 
-- **Retrofit and API Communication:**  
-  The project defines a Retrofit instance under `RetrofitInstance` that sets up the base URL and a Gson converter. The `AviationStackApi` interface details the API endpoints required to fetch flight data. This design allows for clear separation between network communication and data processing.
+https://github.com/user-attachments/assets/206202d9-8936-4095-a510-5a3f03b8a115
 
-- **Data Models:**  
-  Models such as `AviationStackResponse` and `AviationFlightData` encapsulate the information received from the aviation API. Nested data models ensure that every aspect of flight information—from flight identifiers to live tracking data—is appropriately structured.
-
-- **Flight Tracking ViewModel:**  
-  The `FlightViewModel` is responsible for real-time updates. It fetches data from the API, manages error states, and maintains a flag for when tracking is active. The method `startRealTimeTracking` continuously polls the API using a one-minute delay loop to update flight data.
-
-- **Room Database Integration:**  
-  The app uses Room for persistent storage, with an entity class `FlightRecordEntity` that represents each stored flight record. The DAO (`FlightRecordDao`) provides methods not only for inserting records but also for querying historical data, ensuring that users can see long-term trends and statistics.
-
-- **WorkManager Background Tasks:**  
-  `FlightDataWorker` is defined as a coroutine-based worker that runs in the background. Its primary function is to periodically fetch flight data for a hardcoded route and save it to the local database. Two scheduling functions, `scheduleTestFlightDataWorker` and `schedulePeriodicFlightDataWorker`, are provided to manage one-time and recurring work requests, respectively.
-
-- **User Interface Implementation:**  
-  Multiple composable functions define the various screens:
-  - **HomeScreen:**  
-    Contains navigation buttons for different features.
-  - **TrackFlightScreen:**  
-    Features an input field for entering the flight IATA code, buttons to initiate or halt tracking, and displays flight details using a card layout.
-  - **TopFlightsScreen:**  
-    Uses inputs for departure and arrival codes to fetch and display the top flights for that route, along with error handling and average duration calculation.
-  - **FlightHistoryScreen:**  
-    Retrieves flight history data from the Room database and renders it in a scrollable list.
-  - **Reusable Component (`InfoRow`):**  
-    A helper composable used throughout the UI to consistently display individual pieces of information.
-
-- **Main Activity and Navigation Setup:**  
-  `MainActivity` serves as the entry point for the app. It initializes the edge-to-edge experience, schedules background workers immediately upon launch, and sets up the navigation graph using the composable `NavHost`. This structure ensures that users can seamlessly switch between screens while benefiting from automatic data updates in the background.
 
 ---
 
-Flight Tracker seamlessly combines data fetching, persistent storage, and dynamic user interfaces to provide an engaging experience for real-time flight insights and historical analysis. Enjoy exploring flight data with this modern Android application!
+## Getting Started
+
+### Prerequisites
+- Android Studio (Latest stable version)
+- Kotlin 1.9.0 or higher
+- An API key from an aviation data provider (e.g., AviationStack)
+
+### Installation
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/your-username/flight-tracker.git
+   ```
+2. **Open in Android Studio**:
+   - Import the project into Android Studio.
+3. **Add API Key**:
+   - Create a `local.properties` file in the project root.
+   - Add your aviation API key: `AVIATION_API_KEY=your_api_key_here`
+4. **Build and Run**:
+   - Sync the project with Gradle.
+   - Run the app on an emulator or physical device (API 21+).
+
+---
+
+## Usage
+1. **Track a Flight**:
+   - Navigate to the **Track Flight Screen**.
+   - Enter a flight's IATA code (e.g., `AA123`).
+   - Start tracking to view real-time data like altitude, speed, and coordinates.
+
+2. **Analyze Top Flights**:
+   - Go to the **Top Flights Screen**.
+   - Input departure and arrival IATA codes (e.g., `LAX` to `JFK`).
+   - View the top 5 flights and their average duration.
+
+3. **View Flight History**:
+   - Access the **Flight History Screen** to see stored flight records.
+   - Records are sorted by date and include flight IATA, duration, and timestamp.
+
+4. **Background Updates**:
+   - The app automatically schedules background tasks to fetch and store flight data using **WorkManager**.
+
+---
+
+## Code Highlights
+- **Retrofit Setup**: Configured in `RetrofitInstance` with Gson for JSON parsing.
+- **FlightViewModel**: Handles real-time tracking with coroutines and state management.
+- **Room Database**: Persists flight data with `FlightRecordEntity` and `FlightRecordDao`.
+- **WorkManager**: Schedules periodic data fetching with `FlightDataWorker`.
+- **Jetpack Compose**: Powers the UI with composable functions like `HomeScreen`, `TrackFlightScreen`, and reusable `InfoRow`.
+
+---
+
+## License
+![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)  
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Contributing
+Contributions are welcome! Please follow these steps:
+1. Fork the repository.
+2. Create a feature branch (`git checkout -b feature/YourFeature`).
+3. Commit your changes (`git commit -m 'Add YourFeature'`).
+4. Push to the branch (`git push origin feature/YourFeature`).
+5. Open a pull request.
+
+---
+
+## Acknowledgements
+- [AviationStack](https://aviationstack.com/) for providing flight data APIs.
+- [Jetpack Compose](https://developer.android.com/jetpack/compose) for modern UI development.
+- [Giphy](https://giphy.com/) for free dark -themed GIFs.
+- [Freepik](https://freepik.com/) for -themed images.
+
+---
+
+*Fly high with Flight Tracker and explore the skies with real-time insights!*
