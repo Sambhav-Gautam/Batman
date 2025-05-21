@@ -99,7 +99,7 @@ https://github.com/user-attachments/assets/206202d9-8936-4095-a510-5a3f03b8a115
 ### Installation
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-username/flight-tracker.git
+   git clone https://github.com/Sambhav-Gautam/Batman.git
    ```
 2. **Open in Android Studio**:
    - Import the project into Android Studio.
